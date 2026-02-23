@@ -4,7 +4,7 @@ import logger from '../../config/logger';
 import { v4 as uuidv4 } from 'uuid';
 
 const GHOST_TIMEOUT_THRESHOLD_MS = parseInt(
-    process.env.GHOST_TIMEOUT_THRESHOLD_MS || '300000'
+    process.env.GHOST_TIMEOUT_THRESHOLD_MS || '5000'
 ); // 5 minutes
 
 export class GhostDetectorService {
@@ -20,7 +20,7 @@ export class GhostDetectorService {
           AND (
             (initiated_at < NOW() - INTERVAL '5 minutes' AND status = 'initiated')
             OR (processed_at < NOW() - INTERVAL '10 minutes' AND status = 'processing')
-            OR (initiated_at < NOW() - INTERVAL '3 minutes' AND status = 'pending')
+            OR (initiated_at < NOW() - INTERVAL '10 seconds' AND status = 'pending')
           )
           AND id NOT IN (SELECT transaction_id FROM ghost_flags WHERE escalation_status != 'false_positive')
       `;
@@ -103,7 +103,7 @@ export class GhostDetectorService {
             score += 15;
         }
 
-        const isGhost = score >= 70;
+        const isGhost = score >= 30;
         const recommendation = isGhost
             ? 'Immediate escalation required - High probability ghost transaction'
             : score >= 40
@@ -165,7 +165,7 @@ export class GhostDetectorService {
 
     // Get all ghost flags
     async getGhostFlags(limit: number = 100): Promise<GhostFlag[]> {
-    const query = `
+        const query = `
       SELECT gf.*, t.transaction_ref, t.amount, t.currency, t.payment_method
       FROM ghost_flags gf
       JOIN transactions t ON gf.transaction_id = t.id
@@ -174,13 +174,13 @@ export class GhostDetectorService {
       LIMIT $1
     `;
 
-    const result = await pool.query(query, [limit]);
+        const result = await pool.query(query, [limit]);
 
-    return result.rows.map((row) => ({
-        ...row,
-        reasons: typeof row.reasons === 'string' ? JSON.parse(row.reasons) : row.reasons,
-    }));
-}
+        return result.rows.map((row) => ({
+            ...row,
+            reasons: typeof row.reasons === 'string' ? JSON.parse(row.reasons) : row.reasons,
+        }));
+    }
 
     // Resolve ghost flag
     async resolveGhostFlag(ghostFlagId: string, resolutionNotes: string): Promise<void> {

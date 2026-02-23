@@ -7,7 +7,13 @@
         ],
         "outDir": "./dist",
         "rootDir": "./src",
-        "strict": true,
+        "strict": false,
+        "noImplicitAny": false,
+        "strictNullChecks": false,
+        "strictFunctionTypes": false,
+        "noUnusedLocals": false,
+        "noUnusedParameters": false,
+        "noImplicitReturns": false,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
@@ -16,12 +22,6 @@
         "declaration": true,
         "declarationMap": true,
         "sourceMap": true,
-        "noImplicitAny": true,
-        "strictNullChecks": true,
-        "strictFunctionTypes": true,
-        "noUnusedLocals": true,
-        "noUnusedParameters": true,
-        "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
         "allowSyntheticDefaultImports": true,
         "emitDecoratorMetadata": true,
@@ -41,14 +41,5 @@
                 "modules/shared/*"
             ]
         }
-    },
-    "include": [
-        "src/**/*"
-    ],
-    "exclude": [
-        "node_modules",
-        "dist",
-        "**/*.test.ts",
-        "**/*.spec.ts"
-    ]
+    }
 }

@@ -34,12 +34,17 @@ export default function Dashboard() {
     const [ghostFlags, setGhostFlags] = useState<GhostFlag[]>([]);
     const [loading, setLoading] = useState(true);
     const [detecting, setDetecting] = useState(false);
+    const [auditReports, setAuditReports] = useState<any[]>([]);
 
     useEffect(() => {
         loadGhostFlags();
+        loadAuditReports();
 
-        // Auto-refresh every 30 seconds
-        const interval = setInterval(loadGhostFlags, 30000);
+        const interval = setInterval(() => {
+            loadGhostFlags();
+            loadAuditReports();
+        }, 30000);
+
         return () => clearInterval(interval);
     }, []);
 
@@ -63,6 +68,18 @@ export default function Dashboard() {
             console.error('Ghost detection failed:', error);
         } finally {
             setDetecting(false);
+        }
+    };
+
+    const loadAuditReports = async () => {
+        try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/audit/reports`);
+            const data = await res.json();
+            if (data.success) {
+                setAuditReports(data.data || []);
+            }
+        } catch (error) {
+            console.error('Failed to load audit reports:', error);
         }
     };
 
@@ -269,6 +286,45 @@ export default function Dashboard() {
                             </tbody>
                         </table>
                     </div>
+                </div>
+                {/* AI Audit Reports */}
+                <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg overflow-hidden mt-10">
+                    <div className="p-6 border-b border-gray-200">
+                        <h2 className="text-xl font-semibold text-gray-800">
+                            AI Audit Reports
+                        </h2>
+                    </div>
+
+                    {auditReports.length === 0 ? (
+                        <div className="px-6 py-12 text-center text-gray-500">
+                            No audit reports generated
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-gray-200">
+                            {auditReports.map((report) => (
+                                <div key={report.id} className="p-6 hover:bg-gray-50 transition">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <div>
+                                            <div className="text-sm font-semibold text-gray-900">
+                                                {report.transaction_ref}
+                                            </div>
+                                            <div className="text-xs text-gray-500">
+                                                Type: {report.report_type}
+                                            </div>
+                                        </div>
+
+                                        <div className="text-sm font-medium text-indigo-600">
+                                            Confidence: {(report.confidence_score * 100).toFixed(0)}%
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap">
+                                        {report.report_text}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </main>
         </div>

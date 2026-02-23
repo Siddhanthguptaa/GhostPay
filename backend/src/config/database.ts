@@ -1,21 +1,20 @@
 import dotenv from 'dotenv';
-import { Pool, PoolConfig } from 'pg';
+import { Pool } from 'pg';
 
 dotenv.config();
 
-const poolConfig: PoolConfig = {
-    host: process.env.DATABASE_HOST || 'localhost',
-    port: parseInt(process.env.DATABASE_PORT || '5432'),
-    database: process.env.DATABASE_NAME || 'payflow_db',
-    user: process.env.DATABASE_USER || 'payflow_user',
-    password: process.env.DATABASE_PASSWORD || 'secure_password',
+// Use DATABASE_URL (Docker-safe)
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is not defined');
+}
+
+// Create connection pool using connection string
+export const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
-};
-
-// Create connection pool
-export const pool = new Pool(poolConfig);
+});
 
 // Error handler
 pool.on('error', (err) => {

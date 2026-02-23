@@ -161,7 +161,7 @@ export class WebhookService {
       WHERE id = $1
     `;
 
-        await pool.query(query, [
+        await pool.query(updateQuery, [
             webhookEvent.id,
             webhookEvent.attempt_number + 1,
             nextRetryAt,
