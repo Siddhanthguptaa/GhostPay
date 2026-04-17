@@ -1,26 +1,24 @@
-import { pool } from '../../config/database';
-import { CohereClient } from 'cohere-ai';
+import { pool, isUsingInMemory, memoryStore } from '../../config/database';
 import { LedgerEntry, LedgerMismatch, AuditReport } from '../shared/types';
 import logger from '../../config/logger';
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize Cohere AI
+// AI is optional — don't crash if not configured
+let cohere: any = null;
 const USE_LLM = process.env.ENABLE_AI_AUDITOR === 'true' && process.env.COHERE_API_KEY;
 
-let cohere: CohereClient | null = null;
-
 if (USE_LLM && process.env.COHERE_API_KEY) {
-  try {
-    cohere = new CohereClient({
-      token: process.env.COHERE_API_KEY,
-    });
-    console.log('✅ Cohere AI initialized successfully');
-  } catch (error) {
-    console.error('❌ Cohere initialization error:', error);
-    console.warn('⚠️ Cohere initialization failed - using rule-based audits');
-  }
+    try {
+        const { CohereClient } = require('cohere-ai');
+        cohere = new CohereClient({
+            token: process.env.COHERE_API_KEY,
+        });
+        console.log('✅ Cohere AI initialized successfully');
+    } catch (error) {
+        console.warn('⚠️ Cohere initialization failed - using rule-based audits');
+    }
 } else {
-  console.log('⚠️ Cohere not enabled');
+    console.log('ℹ️  AI Auditor: Using rule-based analysis (no Cohere API key)');
 }
 
 export class AuditService {
@@ -37,6 +35,38 @@ export class AuditService {
     ): Promise<void> {
         try {
             logger.info(`Ingesting ${entries.length} ledger entries from ${sourceType}`);
+
+            if (isUsingInMemory()) {
+                for (const entry of entries) {
+                    const txn = memoryStore.transactions.find(
+                        t => t.transaction_ref === entry.source_transaction_id
+                    );
+                    const existing = memoryStore.ledger_entries.find(
+                        e => e.source_type === sourceType && e.source_transaction_id === entry.source_transaction_id
+                    );
+
+                    if (existing) {
+                        existing.amount = entry.amount;
+                        existing.status = entry.status;
+                    } else {
+                        memoryStore.ledger_entries.push({
+                            id: uuidv4(),
+                            source_type: sourceType,
+                            source_transaction_id: entry.source_transaction_id,
+                            transaction_id: txn?.id || null,
+                            amount: entry.amount,
+                            currency: entry.currency || 'INR',
+                            status: entry.status,
+                            entry_type: entry.entry_type,
+                            metadata: entry.metadata || {},
+                            recorded_at: new Date(),
+                            created_at: new Date(),
+                        });
+                    }
+                }
+                logger.info(`Successfully ingested ledger from ${sourceType}`);
+                return;
+            }
 
             for (const entry of entries) {
                 const transactionQuery = await pool.query(
@@ -80,6 +110,40 @@ export class AuditService {
 
     async findMismatches(): Promise<LedgerMismatch[]> {
         try {
+            if (isUsingInMemory()) {
+                const mismatches: LedgerMismatch[] = [];
+                const entriesByTxn = new Map<string, any[]>();
+
+                for (const entry of memoryStore.ledger_entries) {
+                    if (!entry.transaction_id) continue;
+                    if (!entriesByTxn.has(entry.transaction_id)) {
+                        entriesByTxn.set(entry.transaction_id, []);
+                    }
+                    entriesByTxn.get(entry.transaction_id)!.push(entry);
+                }
+
+                for (const [txnId, entries] of entriesByTxn) {
+                    for (let i = 0; i < entries.length; i++) {
+                        for (let j = i + 1; j < entries.length; j++) {
+                            const e1 = entries[i];
+                            const e2 = entries[j];
+                            if (e1.amount !== e2.amount || e1.status !== e2.status) {
+                                mismatches.push({
+                                    transaction_id: txnId,
+                                    source_a: e1 as any,
+                                    source_b: e2 as any,
+                                    difference: Math.abs(e1.amount - e2.amount),
+                                    mismatch_type: e1.amount !== e2.amount ? 'amount_mismatch' : 'status_mismatch',
+                                });
+                            }
+                        }
+                    }
+                }
+
+                logger.info(`Found ${mismatches.length} ledger mismatches`);
+                return mismatches;
+            }
+
             const query = `
         WITH ledger_comparison AS (
           SELECT
@@ -141,34 +205,39 @@ export class AuditService {
 
     async generateAuditReport(transactionId: string): Promise<AuditReport> {
         try {
-            const transactionQuery = await pool.query(
-                'SELECT * FROM transactions WHERE id = $1',
-                [transactionId]
-            );
+            let transaction: any;
+            let ledgerEntries: any[];
+            let ghostFlags: any[];
 
-            if (transactionQuery.rows.length === 0) {
-                throw new Error(`Transaction not found: ${transactionId}`);
+            if (isUsingInMemory()) {
+                transaction = memoryStore.transactions.find(t => t.id === transactionId);
+                if (!transaction) throw new Error(`Transaction not found: ${transactionId}`);
+                ledgerEntries = memoryStore.ledger_entries.filter(e => e.transaction_id === transactionId);
+                ghostFlags = memoryStore.ghost_flags.filter(gf => gf.transaction_id === transactionId);
+            } else {
+                const transactionQuery = await pool.query(
+                    'SELECT * FROM transactions WHERE id = $1',
+                    [transactionId]
+                );
+                if (transactionQuery.rows.length === 0) {
+                    throw new Error(`Transaction not found: ${transactionId}`);
+                }
+                transaction = transactionQuery.rows[0];
+                const ledgerQuery = await pool.query(
+                    'SELECT * FROM ledger_entries WHERE transaction_id = $1 ORDER BY recorded_at',
+                    [transactionId]
+                );
+                ledgerEntries = ledgerQuery.rows;
+                const ghostQuery = await pool.query(
+                    'SELECT * FROM ghost_flags WHERE transaction_id = $1',
+                    [transactionId]
+                );
+                ghostFlags = ghostQuery.rows;
             }
-
-            const transaction = transactionQuery.rows[0];
-
-            const ledgerQuery = await pool.query(
-                'SELECT * FROM ledger_entries WHERE transaction_id = $1 ORDER BY recorded_at',
-                [transactionId]
-            );
-
-            const ledgerEntries = ledgerQuery.rows;
-
-            const ghostQuery = await pool.query(
-                'SELECT * FROM ghost_flags WHERE transaction_id = $1',
-                [transactionId]
-            );
-
-            const ghostFlags = ghostQuery.rows;
 
             const findings: any = {
                 transaction_ref: transaction.transaction_ref,
-                amount: parseFloat(transaction.amount),
+                amount: typeof transaction.amount === 'string' ? parseFloat(transaction.amount) : transaction.amount,
                 currency: transaction.currency,
                 status: transaction.status,
                 ledger_entries: ledgerEntries.length,
@@ -189,7 +258,9 @@ export class AuditService {
             }
 
             if (ledgerEntries.length > 1) {
-                const amounts = ledgerEntries.map((e) => parseFloat(e.amount));
+                const amounts = ledgerEntries.map((e) =>
+                    typeof e.amount === 'string' ? parseFloat(e.amount) : e.amount
+                );
                 if (new Set(amounts).size > 1) {
                     findings.issues.push('Amount discrepancy across ledger sources');
                 }
@@ -207,6 +278,32 @@ export class AuditService {
                 reportText = this.generateRuleBasedReport(transaction, ledgerEntries, findings);
             }
 
+            const reportId = uuidv4();
+            const reportType = findings.issues.length > 0 ? 'mismatch' : 'reconciliation';
+            const now = new Date();
+            const aiModel = USE_LLM && cohere ? 'cohere-command' : 'rule_based';
+
+            if (isUsingInMemory()) {
+                const report: any = {
+                    id: reportId,
+                    transaction_id: transactionId,
+                    transaction_ref: transaction.transaction_ref,
+                    amount: findings.amount,
+                    currency: transaction.currency,
+                    report_type: reportType,
+                    findings,
+                    report_text: reportText,
+                    ai_model: aiModel,
+                    confidence_score: confidenceScore,
+                    reviewed_by: null,
+                    reviewed_at: null,
+                    created_at: now,
+                };
+                memoryStore.audit_reports.push(report);
+                logger.info(`Audit report generated for transaction ${transaction.transaction_ref}`);
+                return report;
+            }
+
             const insertQuery = `
         INSERT INTO audit_reports (
           id, transaction_id, report_type, findings, report_text,
@@ -216,17 +313,15 @@ export class AuditService {
         RETURNING *
       `;
 
-            const reportType = findings.issues.length > 0 ? 'mismatch' : 'reconciliation';
-
             const result = await pool.query(insertQuery, [
-                uuidv4(),
+                reportId,
                 transactionId,
                 reportType,
                 JSON.stringify(findings),
                 reportText,
-                USE_LLM && cohere ? 'cohere-command' : 'rule_based',
+                aiModel,
                 confidenceScore,
-                new Date(),
+                now,
             ]);
 
             logger.info(`Audit report generated for transaction ${transaction.transaction_ref}`);
@@ -262,7 +357,7 @@ ${ledgerEntries
                 .join('\n')}
 
 **Ghost Detection:**
-${ghostFlags.length > 0 ? `- Score: ${ghostFlags[0].ghost_score}/100\n- Reasons: ${ghostFlags[0].reasons.join(', ')}` : '- No ghost flags detected'}
+${ghostFlags.length > 0 ? `- Score: ${ghostFlags[0].ghost_score}/100\n- Reasons: ${Array.isArray(ghostFlags[0].reasons) ? ghostFlags[0].reasons.join(', ') : ghostFlags[0].reasons}` : '- No ghost flags detected'}
 
 **Detected Issues:**
 ${findings.issues.length > 0 ? findings.issues.map((i: string) => `- ${i}`).join('\n') : '- No issues detected'}
@@ -282,14 +377,12 @@ Format your response in clear markdown with proper sections.`;
     ): Promise<{ report: string; confidence: number }> {
         try {
             if (!cohere) {
-                return { 
-                    report: 'AI auditor disabled. Using rule-based analysis.', 
-                    confidence: 0 
+                return {
+                    report: 'AI auditor disabled. Using rule-based analysis.',
+                    confidence: 0,
                 };
             }
 
-            console.log('🚀 Calling Cohere API...');
-            
             const response = await cohere.generate({
                 model: 'command',
                 prompt: prompt,
@@ -298,21 +391,19 @@ Format your response in clear markdown with proper sections.`;
             });
 
             const report = response.generations[0].text.trim();
-            
+
             logger.info('✅ Cohere AI audit report generated successfully');
-            console.log('✅ Cohere report generated, length:', report.length);
-            
+
             return {
                 report,
                 confidence: 0.90,
             };
         } catch (error: any) {
-            logger.error('Cohere AI report generation failed:', error);
-            console.error('❌ Cohere error details:', error.message);
-            
-            return { 
-                report: 'AI report generation unavailable. Using fallback analysis.', 
-                confidence: 0.3 
+            logger.error('Cohere AI report generation failed:', error.message);
+
+            return {
+                report: 'AI report generation unavailable. Using fallback analysis.',
+                confidence: 0.3,
             };
         }
     }
@@ -348,6 +439,12 @@ Format your response in clear markdown with proper sections.`;
     }
 
     async getAuditReports(limit: number = 50): Promise<AuditReport[]> {
+        if (isUsingInMemory()) {
+            return memoryStore.audit_reports
+                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .slice(0, limit);
+        }
+
         const query = `
       SELECT ar.*, t.transaction_ref, t.amount, t.currency
       FROM audit_reports ar

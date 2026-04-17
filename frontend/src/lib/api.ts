@@ -50,6 +50,9 @@ export const getPaymentStatus = async (transactionId: string) => {
 export const detectGhostTransactions = async () => {
     return apiClient.post('/ghost/detect');
 };
+// export const detectGhostTransactions = async () => {
+//     return apiClient.get('/ghost/detect');
+// };
 
 export const getGhostFlags = async (limit: number = 100) => {
     return apiClient.get(`/ghost/flags?limit=${limit}`);
@@ -73,8 +76,11 @@ export const getLedgerMismatches = async () => {
     return apiClient.get('/ledger/mismatches');
 };
 
+// export const generateAuditReport = async (transactionId: string) => {
+//     return apiClient.post(`/audit/generate/${transactionId}`);
+// };
 export const generateAuditReport = async (transactionId: string) => {
-    return apiClient.post(`/audit/generate/${transactionId}`);
+    return apiClient.post('/audit/generate', { transactionId });
 };
 
 export const getAuditReports = async (limit: number = 50) => {

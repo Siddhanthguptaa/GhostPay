@@ -2,14 +2,12 @@ import 'dotenv/config';
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import { testConnection as testDatabaseConnection } from './config/database';
 import { initRedis } from './config/redis';
 import logger from './config/logger';
 import apiRoutes from './routes/api';
 import path from 'path';
 import fs from 'fs';
-dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -86,13 +84,10 @@ const startServer = async () => {
     try {
         logger.info('🚀 Starting PayFlow X GhostPay server...');
 
-        // Test database connection
-        const dbConnected = await testDatabaseConnection();
-        if (!dbConnected) {
-            throw new Error('Database connection failed');
-        }
+        // Test database connection (graceful — won't crash if DB is unavailable)
+        await testDatabaseConnection();
 
-        // Initialize Redis
+        // Initialize Redis (graceful — falls back to in-memory)
         await initRedis();
 
         // Start Express server
@@ -101,11 +96,6 @@ const startServer = async () => {
             logger.info(`📡 API available at http://localhost:${PORT}/api/v1`);
             logger.info(`🏥 Health check: http://localhost:${PORT}/api/v1/health`);
         });
-
-        // Start background workers
-        // Note: In production, these should run in separate processes
-        // WebhookService.processWebhookQueue(); // Webhook processor
-        // setInterval(() => ghostDetector.detectGhostTransactions(), 30000); // Ghost detector every 30s
     } catch (error) {
         logger.error('❌ Server startup failed:', error);
         process.exit(1);
@@ -131,7 +121,7 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
     logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    process.exit(1);
+    // Don't exit — just log
 });
 
 // Start the server

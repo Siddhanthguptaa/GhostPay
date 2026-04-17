@@ -1,11 +1,11 @@
-import { pool } from '../../config/database';
+import { pool, isUsingInMemory, memoryStore } from '../../config/database';
 import { GhostFlag, GhostDetectionResult, Transaction } from '../shared/types';
 import logger from '../../config/logger';
 import { v4 as uuidv4 } from 'uuid';
 
 const GHOST_TIMEOUT_THRESHOLD_MS = parseInt(
     process.env.GHOST_TIMEOUT_THRESHOLD_MS || '5000'
-); // 5 minutes
+); // 5 seconds for demo
 
 export class GhostDetectorService {
     // Run ghost detection on all transactions
@@ -13,7 +13,41 @@ export class GhostDetectorService {
         try {
             logger.info('Running ghost detection...');
 
-            // Find potentially ghost transactions
+            if (isUsingInMemory()) {
+                const ghostFlags: GhostFlag[] = [];
+                const now = Date.now();
+
+                const candidates = memoryStore.transactions.filter(t => {
+                    if (!['pending', 'processing', 'initiated'].includes(t.status)) return false;
+
+                    // Already flagged (non-false-positive)
+                    const alreadyFlagged = memoryStore.ghost_flags.some(
+                        gf => gf.transaction_id === t.id && gf.escalation_status !== 'false_positive'
+                    );
+                    if (alreadyFlagged) return false;
+
+                    const age = now - new Date(t.initiated_at).getTime();
+                    return age > GHOST_TIMEOUT_THRESHOLD_MS;
+                });
+
+                for (const transaction of candidates) {
+                    const detectionResult = await this.analyzeTransactionInMemory(transaction);
+
+                    if (detectionResult.is_ghost) {
+                        const ghostFlag = this.flagAsGhostInMemory(
+                            transaction.id,
+                            detectionResult.ghost_score,
+                            detectionResult.reasons
+                        );
+                        ghostFlags.push(ghostFlag);
+                    }
+                }
+
+                logger.info(`Ghost detection completed: ${ghostFlags.length} ghost transactions found`);
+                return ghostFlags;
+            }
+
+            // Database mode
             const query = `
         SELECT * FROM transactions
         WHERE status IN ('pending', 'processing', 'initiated')
@@ -47,6 +81,91 @@ export class GhostDetectorService {
             logger.error('Ghost detection failed:', error);
             throw error;
         }
+    }
+
+    // Analyze in memory
+    private async analyzeTransactionInMemory(transaction: any): Promise<GhostDetectionResult> {
+        const reasons: string[] = [];
+        let score = 0;
+
+        const timeInPending = Date.now() - new Date(transaction.initiated_at).getTime();
+        if (timeInPending > GHOST_TIMEOUT_THRESHOLD_MS) {
+            reasons.push(`Transaction stuck in ${transaction.status} for ${Math.floor(timeInPending / 60000)} minutes`);
+            score += 30;
+        }
+
+        // Check ledger
+        const gatewayEntry = memoryStore.ledger_entries.find(
+            e => e.transaction_id === transaction.id && e.source_type === 'gateway'
+        );
+        const bankEntry = memoryStore.ledger_entries.find(
+            e => e.transaction_id === transaction.id && e.source_type === 'bank'
+        );
+        const merchantEntry = memoryStore.ledger_entries.find(
+            e => e.transaction_id === transaction.id && e.source_type === 'merchant'
+        );
+
+        if (gatewayEntry && !bankEntry) {
+            reasons.push('Gateway recorded transaction but no bank confirmation');
+            score += 35;
+        } else if (bankEntry && gatewayEntry && bankEntry.status !== gatewayEntry.status) {
+            reasons.push('Status mismatch between gateway and bank');
+            score += 20;
+        }
+
+        if (!merchantEntry && bankEntry?.status === 'approved') {
+            reasons.push('Bank approved but merchant never credited');
+            score += 40;
+        }
+
+        if (transaction.status === 'processing' && !transaction.processed_at) {
+            reasons.push('Status marked as processing but no processing timestamp');
+            score += 15;
+        }
+
+        const isGhost = score >= 30;
+
+        return {
+            is_ghost: isGhost,
+            ghost_score: Math.min(score, 100),
+            reasons,
+            recommendation: isGhost
+                ? 'Immediate escalation required - High probability ghost transaction'
+                : 'Normal transaction flow',
+        };
+    }
+
+    // Flag in memory
+    private flagAsGhostInMemory(transactionId: string, ghostScore: number, reasons: string[]): GhostFlag {
+        const now = new Date();
+        const escalationStatus = ghostScore >= 80 ? 'investigating' : 'pending';
+
+        const txn = memoryStore.transactions.find(t => t.id === transactionId);
+        const ghostFlag: any = {
+            id: uuidv4(),
+            transaction_id: transactionId,
+            transaction_ref: txn?.transaction_ref || 'N/A',
+            amount: txn?.amount || 0,
+            currency: txn?.currency || 'INR',
+            payment_method: txn?.payment_method || 'UPI',
+            ghost_score: ghostScore,
+            detection_method: 'rule_based',
+            reasons,
+            escalation_status: escalationStatus,
+            escalated_at: now,
+            resolved_at: null,
+            resolution_notes: null,
+            created_at: now,
+            updated_at: now,
+        };
+
+        memoryStore.ghost_flags.push(ghostFlag);
+
+        // Update transaction status
+        if (txn) txn.status = 'ghost';
+
+        logger.warn(`Transaction flagged as ghost: ${transactionId} (score: ${ghostScore})`);
+        return ghostFlag;
     }
 
     // Analyze individual transaction for ghost indicators
@@ -165,6 +284,13 @@ export class GhostDetectorService {
 
     // Get all ghost flags
     async getGhostFlags(limit: number = 100): Promise<GhostFlag[]> {
+        if (isUsingInMemory()) {
+            return memoryStore.ghost_flags
+                .filter(gf => gf.escalation_status !== 'false_positive')
+                .sort((a, b) => b.ghost_score - a.ghost_score)
+                .slice(0, limit);
+        }
+
         const query = `
       SELECT gf.*, t.transaction_ref, t.amount, t.currency, t.payment_method
       FROM ghost_flags gf
@@ -184,6 +310,16 @@ export class GhostDetectorService {
 
     // Resolve ghost flag
     async resolveGhostFlag(ghostFlagId: string, resolutionNotes: string): Promise<void> {
+        if (isUsingInMemory()) {
+            const flag = memoryStore.ghost_flags.find(gf => gf.id === ghostFlagId);
+            if (flag) {
+                flag.escalation_status = 'resolved';
+                flag.resolved_at = new Date();
+                flag.resolution_notes = resolutionNotes;
+            }
+            return;
+        }
+
         const query = `
       UPDATE ghost_flags
       SET escalation_status = 'resolved',
@@ -198,6 +334,18 @@ export class GhostDetectorService {
 
     // Mark as false positive
     async markAsFalsePositive(ghostFlagId: string, notes: string): Promise<void> {
+        if (isUsingInMemory()) {
+            const flag = memoryStore.ghost_flags.find(gf => gf.id === ghostFlagId);
+            if (flag) {
+                flag.escalation_status = 'false_positive';
+                flag.resolved_at = new Date();
+                flag.resolution_notes = notes;
+                const txn = memoryStore.transactions.find(t => t.id === flag.transaction_id);
+                if (txn) txn.status = 'pending';
+            }
+            return;
+        }
+
         const query = `
       UPDATE ghost_flags
       SET escalation_status = 'false_positive',

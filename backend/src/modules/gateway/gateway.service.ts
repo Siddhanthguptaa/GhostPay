@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { pool } from '../../config/database';
+import { pool, isUsingInMemory, memoryStore } from '../../config/database';
 import {
     Transaction,
     InitiatePaymentRequest,
@@ -37,8 +37,64 @@ export class GatewayService {
             const transactionId = uuidv4();
             const transactionRef = generateTransactionRef();
             const currency = request.currency || 'INR';
+            const now = new Date();
 
-            // Create transaction record
+            if (isUsingInMemory()) {
+                // In-memory transaction creation
+                const transaction: any = {
+                    id: transactionId,
+                    merchant_id: request.merchant_id,
+                    transaction_ref: transactionRef,
+                    amount: request.amount,
+                    currency,
+                    payment_method: request.payment_method,
+                    status: 'initiated',
+                    customer_email: request.customer_email,
+                    customer_phone: request.customer_phone,
+                    description: request.description,
+                    metadata: request.metadata || {},
+                    initiated_at: now,
+                    processed_at: null,
+                    completed_at: null,
+                    failed_at: null,
+                    error_message: null,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                memoryStore.transactions.push(transaction);
+
+                logger.info(`Payment initiated: ${transactionRef} - ${request.payment_method} - ${currency} ${request.amount}`);
+
+                // Create ledger entry
+                memoryStore.ledger_entries.push({
+                    id: uuidv4(),
+                    source_type: 'gateway',
+                    source_transaction_id: transactionRef,
+                    transaction_id: transactionId,
+                    amount: request.amount,
+                    currency,
+                    status: 'initiated',
+                    entry_type: 'debit',
+                    metadata: {},
+                    recorded_at: now,
+                    created_at: now,
+                });
+
+                // Process payment asynchronously
+                this.processPayment(transaction).catch((error) => {
+                    logger.error(`Payment processing failed for ${transactionRef}:`, error);
+                });
+
+                return {
+                    transaction_id: transactionId,
+                    transaction_ref: transactionRef,
+                    status: 'initiated' as TransactionStatus,
+                    created_at: now,
+                };
+            }
+
+            // Database mode
             const query = `
         INSERT INTO transactions (
           id, merchant_id, transaction_ref, amount, currency,
@@ -61,9 +117,9 @@ export class GatewayService {
                 request.customer_phone,
                 request.description,
                 JSON.stringify(request.metadata || {}),
-                new Date(),
-                new Date(),
-                new Date(),
+                now,
+                now,
+                now,
             ];
 
             const result = await pool.query(query, values);
@@ -100,7 +156,7 @@ export class GatewayService {
     }
 
     // Process payment through acquirer
-    private async processPayment(transaction: Transaction): Promise<void> {
+    private async processPayment(transaction: any): Promise<void> {
         try {
             // Update status to pending
             await this.updateTransactionStatus(transaction.id, 'pending');
@@ -113,7 +169,7 @@ export class GatewayService {
                     acquirerResponse = await this.acquirer.processUPI(
                         transaction.id,
                         transaction.metadata?.vpa || 'user@upi',
-                        transaction.amount
+                        typeof transaction.amount === 'string' ? parseFloat(transaction.amount) : transaction.amount
                     );
                     break;
 
@@ -127,7 +183,7 @@ export class GatewayService {
                     acquirerResponse = await this.acquirer.processCard(
                         transaction.id,
                         token,
-                        transaction.amount
+                        typeof transaction.amount === 'string' ? parseFloat(transaction.amount) : transaction.amount
                     );
                     break;
 
@@ -135,7 +191,7 @@ export class GatewayService {
                     acquirerResponse = await this.acquirer.processWallet(
                         transaction.id,
                         transaction.metadata?.wallet_id || 'wallet_123',
-                        transaction.amount
+                        typeof transaction.amount === 'string' ? parseFloat(transaction.amount) : transaction.amount
                     );
                     break;
 
@@ -152,7 +208,7 @@ export class GatewayService {
                     transaction.id,
                     'bank',
                     acquirerResponse.acquirer_ref,
-                    transaction.amount,
+                    typeof transaction.amount === 'string' ? parseFloat(transaction.amount) : transaction.amount,
                     transaction.currency,
                     'approved',
                     'debit'
@@ -177,6 +233,36 @@ export class GatewayService {
     // Complete successful transaction
     private async completeTransaction(transactionId: string, acquirerRef: string): Promise<void> {
         try {
+            const now = new Date();
+
+            if (isUsingInMemory()) {
+                const txn = memoryStore.transactions.find(t => t.id === transactionId);
+                if (txn) {
+                    txn.status = 'success';
+                    txn.completed_at = now;
+                    txn.metadata = { ...txn.metadata, acquirer_ref: acquirerRef };
+                    txn.updated_at = now;
+
+                    // Create merchant ledger entry
+                    memoryStore.ledger_entries.push({
+                        id: uuidv4(),
+                        source_type: 'merchant',
+                        source_transaction_id: txn.transaction_ref,
+                        transaction_id: transactionId,
+                        amount: txn.amount,
+                        currency: txn.currency,
+                        status: 'success',
+                        entry_type: 'credit',
+                        metadata: {},
+                        recorded_at: now,
+                        created_at: now,
+                    });
+
+                    logger.info(`Transaction completed successfully: ${txn.transaction_ref}`);
+                }
+                return;
+            }
+
             const query = `
         UPDATE transactions
         SET status = 'success', completed_at = $2,
@@ -187,7 +273,7 @@ export class GatewayService {
 
             const result = await pool.query(query, [
                 transactionId,
-                new Date(),
+                now,
                 JSON.stringify(acquirerRef),
             ]);
 
@@ -236,6 +322,20 @@ export class GatewayService {
 
     // Fail transaction
     private async failTransaction(transactionId: string, errorMessage: string): Promise<void> {
+        const now = new Date();
+
+        if (isUsingInMemory()) {
+            const txn = memoryStore.transactions.find(t => t.id === transactionId);
+            if (txn) {
+                txn.status = 'failed';
+                txn.failed_at = now;
+                txn.error_message = errorMessage;
+                txn.updated_at = now;
+                logger.info(`Transaction failed: ${txn.transaction_ref} - ${errorMessage}`);
+            }
+            return;
+        }
+
         const query = `
       UPDATE transactions
       SET status = 'failed', failed_at = $2, error_message = $3
@@ -243,7 +343,7 @@ export class GatewayService {
       RETURNING *
     `;
 
-        const result = await pool.query(query, [transactionId, new Date(), errorMessage]);
+        const result = await pool.query(query, [transactionId, now, errorMessage]);
         const transaction = result.rows[0];
 
         logger.info(`Transaction failed: ${transaction.transaction_ref} - ${errorMessage}`);
@@ -254,6 +354,16 @@ export class GatewayService {
         transactionId: string,
         status: TransactionStatus
     ): Promise<void> {
+        if (isUsingInMemory()) {
+            const txn = memoryStore.transactions.find(t => t.id === transactionId);
+            if (txn) {
+                txn.status = status;
+                txn.updated_at = new Date();
+                if (status === 'processing') txn.processed_at = new Date();
+            }
+            return;
+        }
+
         const statusColumn = status === 'processing' ? 'processed_at' : null;
 
         const query = statusColumn
@@ -277,6 +387,30 @@ export class GatewayService {
         status: string,
         entryType: string
     ): Promise<void> {
+        const now = new Date();
+
+        if (isUsingInMemory()) {
+            const existing = memoryStore.ledger_entries.find(
+                e => e.source_type === sourceType && e.source_transaction_id === sourceTransactionId
+            );
+            if (!existing) {
+                memoryStore.ledger_entries.push({
+                    id: uuidv4(),
+                    source_type: sourceType,
+                    source_transaction_id: sourceTransactionId,
+                    transaction_id: transactionId,
+                    amount,
+                    currency,
+                    status,
+                    entry_type: entryType,
+                    metadata: {},
+                    recorded_at: now,
+                    created_at: now,
+                });
+            }
+            return;
+        }
+
         const query = `
       INSERT INTO ledger_entries (
         id, source_type, source_transaction_id, transaction_id,
@@ -295,13 +429,29 @@ export class GatewayService {
             currency,
             status,
             entryType,
-            new Date(),
-            new Date(),
+            now,
+            now,
         ]);
     }
 
     // Get payment status
     async getPaymentStatus(transactionId: string): Promise<PaymentStatusResponse | null> {
+        if (isUsingInMemory()) {
+            const txn = memoryStore.transactions.find(t => t.id === transactionId);
+            if (!txn) return null;
+            return {
+                transaction_id: txn.id,
+                transaction_ref: txn.transaction_ref,
+                status: txn.status,
+                amount: typeof txn.amount === 'string' ? parseFloat(txn.amount) : txn.amount,
+                currency: txn.currency,
+                payment_method: txn.payment_method,
+                initiated_at: txn.initiated_at,
+                completed_at: txn.completed_at,
+                error_message: txn.error_message,
+            };
+        }
+
         const query = 'SELECT * FROM transactions WHERE id = $1';
         const result = await pool.query(query, [transactionId]);
 

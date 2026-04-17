@@ -1,6 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { v4 as uuidv4 } from 'uuid';
-import { pool } from '../../config/database';
+import { pool, isUsingInMemory, memoryStore } from '../../config/database';
 import { PaymentToken, PaymentMethod } from '../shared/types';
 import { generateToken } from '../shared/utils';
 import logger from '../../config/logger';
@@ -31,6 +31,21 @@ export class VaultService {
             const encryptedPayload = this.encrypt(JSON.stringify(paymentData));
             const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
 
+            if (isUsingInMemory()) {
+                memoryStore.tokens.push({
+                    id: uuidv4(),
+                    transaction_id: transactionId,
+                    token_value: tokenValue,
+                    encrypted_payload: encryptedPayload,
+                    payment_method: paymentMethod,
+                    expires_at: expiresAt,
+                    is_used: false,
+                    created_at: new Date(),
+                });
+                logger.info(`Token created for transaction ${transactionId}`);
+                return tokenValue;
+            }
+
             const query = `
         INSERT INTO tokens (id, transaction_id, token_value, encrypted_payload, payment_method, expires_at)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -57,6 +72,14 @@ export class VaultService {
     // Detokenize and retrieve payment data
     static async detokenize(tokenValue: string): Promise<any | null> {
         try {
+            if (isUsingInMemory()) {
+                const token = memoryStore.tokens.find(t => t.token_value === tokenValue);
+                if (!token) return null;
+                if (new Date(token.expires_at) < new Date()) return null;
+                if (token.is_used) return null;
+                return JSON.parse(this.decrypt(token.encrypted_payload));
+            }
+
             const query = `
         SELECT encrypted_payload, expires_at, is_used, payment_method
         FROM tokens
@@ -96,6 +119,12 @@ export class VaultService {
     // Mark token as used
     static async markTokenUsed(tokenValue: string): Promise<void> {
         try {
+            if (isUsingInMemory()) {
+                const token = memoryStore.tokens.find(t => t.token_value === tokenValue);
+                if (token) token.is_used = true;
+                return;
+            }
+
             const query = `
         UPDATE tokens
         SET is_used = true
@@ -113,6 +142,15 @@ export class VaultService {
     // Clean up expired tokens
     static async cleanupExpiredTokens(): Promise<number> {
         try {
+            if (isUsingInMemory()) {
+                const now = new Date();
+                const before = memoryStore.tokens.length;
+                memoryStore.tokens = memoryStore.tokens.filter(
+                    t => new Date(t.expires_at) >= now || t.is_used
+                );
+                return before - memoryStore.tokens.length;
+            }
+
             const query = `
         DELETE FROM tokens
         WHERE expires_at < NOW() AND is_used = false

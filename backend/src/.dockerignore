@@ -1,0 +1,177 @@
+
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+
+PS C:\Users\siddh\Desktop\pitara\GhostPay\GhostPay> docker-compose down -v
+PS C:\Users\siddh\Desktop\pitara\GhostPay\GhostPay> docker-compose up --build
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.08kB done
+#1 DONE 0.0s
+
+#2 [backend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 322B 0.0s done
+#2 DONE 0.0s
+
+#3 [frontend internal] load build definition from Dockerfile
+#3 transferring dockerfile: 188B 0.0s done
+#3 DONE 0.0s
+
+#4 [backend internal] load metadata for docker.io/library/node:18-alpine
+#4 ...
+
+#5 [auth] library/node:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 [backend internal] load metadata for docker.io/library/node:18-alpine
+#4 DONE 2.1s
+
+#6 [frontend internal] load .dockerignore
+#6 transferring context: 2B done
+#6 DONE 0.0s
+
+#7 [backend internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#8 [frontend 1/6] FROM docker.io/library/node:18-alpine@sha256:8d6421d663b4c28fd3ebc498332f249011d118945588d0a35cb9bc4b8ca09d9e
+#8 resolve docker.io/library/node:18-alpine@sha256:8d6421d663b4c28fd3ebc498332f249011d118945588d0a35cb9bc4b8ca09d9e 0.0s done
+#8 DONE 0.0s
+
+#9 [backend internal] load build context
+#9 transferring context: 4.38MB 5.0s
+#9 transferring context: 6.37MB 10.0s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 11.13MB 15.1s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 transferring context: 44.53MB 20.1s
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 13.80MB 25.2s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 15.37MB 30.2s
+#9 transferring context: 16.34MB 35.3s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 19.31MB 40.4s
+#9 transferring context: 22.32MB 45.5s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 transferring context: 59.47MB 50.6s
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 25.67MB 55.7s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 26.58MB 60.8s
+#9 transferring context: 27.87MB 65.8s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 28.35MB 71.0s
+#9 transferring context: 28.64MB 76.1s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 29.65MB 81.2s
+#9 transferring context: 30.37MB 86.2s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 31.22MB 91.3s
+#9 transferring context: 32.76MB 96.4s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 36.04MB 101.5s
+#9 transferring context: 37.49MB 106.6s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 38.56MB 111.7s
+#9 transferring context: 40.82MB 116.8s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 44.08MB 121.8s
+#9 transferring context: 46.01MB 127.0s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 47.08MB 132.0s
+#9 transferring context: 48.97MB 137.1s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 49.64MB 142.2s
+#9 transferring context: 50.97MB 147.2s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 51.21MB 152.2s
+#9 transferring context: 51.69MB 157.3s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 52.87MB 162.3s
+#9 transferring context: 54.63MB 167.5s
+#9 ...
+
+#10 [frontend internal] load build context
+#10 ...
+
+#9 [backend internal] load build context
+#9 transferring context: 55.71MB 172.6s
+#9 transferring context: 56.77MB 177.6s
+#9 ...

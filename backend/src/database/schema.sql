@@ -5,7 +5,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Merchants table
-CREATE TABLE merchants (
+CREATE TABLE IF NOT EXISTS merchants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE merchants (
 );
 
 -- Transactions table
-CREATE TABLE transactions (
+CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     merchant_id UUID NOT NULL REFERENCES merchants(id),
     transaction_ref VARCHAR(100) UNIQUE NOT NULL,
@@ -41,7 +41,7 @@ CREATE TABLE transactions (
 );
 
 -- Payment tokens table (encrypted storage)
-CREATE TABLE tokens (
+CREATE TABLE IF NOT EXISTS tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transaction_id UUID NOT NULL REFERENCES transactions(id),
     token_value VARCHAR(255) UNIQUE NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE tokens (
 );
 
 -- Ledger entries table (multi-source reconciliation)
-CREATE TABLE ledger_entries (
+CREATE TABLE IF NOT EXISTS ledger_entries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     source_type VARCHAR(50) NOT NULL, -- 'merchant', 'gateway', 'bank', 'acquirer'
     source_transaction_id VARCHAR(255) NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE ledger_entries (
 );
 
 -- Ghost flags table (anomaly detection)
-CREATE TABLE ghost_flags (
+CREATE TABLE IF NOT EXISTS ghost_flags (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transaction_id UUID NOT NULL REFERENCES transactions(id),
     ghost_score INTEGER NOT NULL CHECK (ghost_score >= 0 AND ghost_score <= 100),
@@ -84,7 +84,7 @@ CREATE TABLE ghost_flags (
 );
 
 -- Audit reports table (AI-generated)
-CREATE TABLE audit_reports (
+CREATE TABLE IF NOT EXISTS audit_reports (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transaction_id UUID REFERENCES transactions(id),
     report_type VARCHAR(50) NOT NULL, -- 'mismatch', 'reconciliation', 'investigation'
@@ -98,7 +98,7 @@ CREATE TABLE audit_reports (
 );
 
 -- Webhook events table (callback tracking)
-CREATE TABLE webhook_events (
+CREATE TABLE IF NOT EXISTS webhook_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transaction_id UUID NOT NULL REFERENCES transactions(id),
     merchant_id UUID NOT NULL REFERENCES merchants(id),
@@ -118,28 +118,28 @@ CREATE TABLE webhook_events (
 );
 
 -- Indexes for performance
-CREATE INDEX idx_transactions_merchant ON transactions(merchant_id);
-CREATE INDEX idx_transactions_status ON transactions(status);
-CREATE INDEX idx_transactions_created_at ON transactions(created_at DESC);
-CREATE INDEX idx_transactions_ref ON transactions(transaction_ref);
+CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_ref ON transactions(transaction_ref);
 
-CREATE INDEX idx_tokens_transaction ON tokens(transaction_id);
-CREATE INDEX idx_tokens_expires ON tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_tokens_transaction ON tokens(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_tokens_expires ON tokens(expires_at);
 
-CREATE INDEX idx_ledger_source ON ledger_entries(source_type, source_transaction_id);
-CREATE INDEX idx_ledger_transaction ON ledger_entries(transaction_id);
-CREATE INDEX idx_ledger_recorded_at ON ledger_entries(recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_source ON ledger_entries(source_type, source_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_transaction ON ledger_entries(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_recorded_at ON ledger_entries(recorded_at DESC);
 
-CREATE INDEX idx_ghost_flags_transaction ON ghost_flags(transaction_id);
-CREATE INDEX idx_ghost_flags_score ON ghost_flags(ghost_score DESC);
-CREATE INDEX idx_ghost_flags_status ON ghost_flags(escalation_status);
+CREATE INDEX IF NOT EXISTS idx_ghost_flags_transaction ON ghost_flags(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_ghost_flags_score ON ghost_flags(ghost_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ghost_flags_status ON ghost_flags(escalation_status);
 
-CREATE INDEX idx_audit_reports_transaction ON audit_reports(transaction_id);
-CREATE INDEX idx_audit_reports_created ON audit_reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_reports_transaction ON audit_reports(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_audit_reports_created ON audit_reports(created_at DESC);
 
-CREATE INDEX idx_webhook_events_transaction ON webhook_events(transaction_id);
-CREATE INDEX idx_webhook_events_status ON webhook_events(status);
-CREATE INDEX idx_webhook_events_next_retry ON webhook_events(next_retry_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_webhook_events_transaction ON webhook_events(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_status ON webhook_events(status);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_next_retry ON webhook_events(next_retry_at) WHERE status = 'pending';
 
 -- Trigger to update 'updated_at' timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -150,12 +150,15 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_merchants_updated_at ON merchants;
 CREATE TRIGGER update_merchants_updated_at BEFORE UPDATE ON merchants
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_transactions_updated_at ON transactions;
 CREATE TRIGGER update_transactions_updated_at BEFORE UPDATE ON transactions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_ghost_flags_updated_at ON ghost_flags;
 CREATE TRIGGER update_ghost_flags_updated_at BEFORE UPDATE ON ghost_flags
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -167,7 +170,7 @@ VALUES (
     'pk_test_demo_merchant_12345',
     'http://localhost:3000/api/webhooks',
     'whsec_demo_secret_key'
-);
+) ON CONFLICT (email) DO NOTHING;
 
 -- Comments for documentation
 COMMENT ON TABLE transactions IS 'Core payment transactions table';
